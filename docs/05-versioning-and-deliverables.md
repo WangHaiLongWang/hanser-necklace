@@ -19,6 +19,8 @@ HN-FINISH-MAP-v1.0.pdf
 HN-RENDER-FRONT-v1.0.png
 ```
 
+当前 `result.png` / `result.psd` 已登记为 `CONCEPT-v0.1`，仍属于概念工作文件。它们不得直接改名为 `v1.0` 发布文件；只有工程图、矢量/CAD、BOM 和结构定义通过 G2 后，才能建立首个生产发布包。
+
 ## G2 设计发布包清单
 
 - [ ] 产品需求冻结页
