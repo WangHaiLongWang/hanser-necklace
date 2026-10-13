@@ -39,6 +39,7 @@ MIN_REGION_AREA_MM2 = 0.08
 TARGET_WIDTH_MM: float | None = None
 PRESERVE_ALL_DETAILS = False
 PATH_TOLERANCE_MM = 0.08
+SEPARATE_HEART = False
 
 PALETTE = {
     "METAL": "#A7A7A7",
@@ -46,6 +47,7 @@ PALETTE = {
     "WHITE": "#F5F3F0",
     "HAIR": "#905530",
     "BLUE": "#196FC6",
+    "HEART": "#EA6278",
 }
 
 
@@ -113,6 +115,18 @@ def semantic_masks(
         255,
         0,
     ).astype(np.uint8)
+    if PRESERVE_ALL_DETAILS:
+        # Preserve every source divider and widen only sub-target strokes. At
+        # 80 mm, a 3-pixel metal line is approximately 0.18-0.20 mm.
+        target_width_px = max(1, int(round(METAL_WEB_MM * px_per_mm)))
+        radius_px = max(0, (target_width_px - 1) // 2)
+        if radius_px > 0:
+            kernel_size = 2 * radius_px + 1
+            explicit_metal = cv2.dilate(
+                explicit_metal,
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)),
+            )
+            explicit_metal = cv2.bitwise_and(explicit_metal, silhouette)
 
     sr, sg, sb = [skin_layer[:, :, channel].astype(np.int16) for channel in range(3)]
     skin_predicate = (sr >= 190) & (sr > sg + 8) & (sg > sb + 6)
@@ -121,9 +135,9 @@ def semantic_masks(
     cr, cg, cb = [clothing_layer[:, :, channel].astype(np.int16) for channel in range(3)]
     blue_predicate = (cb >= 95) & (cb > cg + 24) & (cg > cr + 12)
     blue = layer_colour_mask(clothing_layer, blue_predicate)
-    # The isolated heart layer is intentionally reassigned to the shared blue.
     heart = np.where(heart_layer[:, :, 3] > 12, 255, 0).astype(np.uint8)
-    blue = cv2.bitwise_or(blue, heart)
+    if not SEPARATE_HEART:
+        blue = cv2.bitwise_or(blue, heart)
 
     hr, hg, hb = [hair_layer[:, :, channel].astype(np.int16) for channel in range(3)]
     hair_predicate = (hr >= 60) & (hr <= 225) & (hr > hg + 22) & (hg > hb + 10)
@@ -144,16 +158,25 @@ def semantic_masks(
         skin = cv2.bitwise_or(skin, hand_skin)
 
     active = silhouette > 0
-    for mask in (skin, white, hair, blue):
+    paint_masks = [skin, white, hair, blue]
+    if SEPARATE_HEART:
+        paint_masks.append(heart)
+    for mask in paint_masks:
         mask[~active] = 0
 
     # Resolve only antialias overlaps, preserving semantic-layer priority.
-    hair[blue > 0] = 0
-    skin[(blue > 0) | (hair > 0)] = 0
-    white[(blue > 0) | (hair > 0) | (skin > 0)] = 0
-    for mask in (skin, white, hair, blue):
+    accents = blue > 0
+    if SEPARATE_HEART:
+        accents = accents | (heart > 0)
+    hair[accents] = 0
+    skin[accents | (hair > 0)] = 0
+    white[accents | (hair > 0) | (skin > 0)] = 0
+    for mask in paint_masks:
         mask[explicit_metal > 0] = 0
-    return {"SKIN": skin, "WHITE": white, "HAIR": hair, "BLUE": blue}, explicit_metal
+    result = {"SKIN": skin, "WHITE": white, "HAIR": hair, "BLUE": blue}
+    if SEPARATE_HEART:
+        result["HEART"] = heart
+    return result, explicit_metal
 
 
 def clean_masks(raw: dict[str, np.ndarray], silhouette: np.ndarray, px_per_mm: float) -> dict[str, np.ndarray]:
@@ -193,6 +216,7 @@ def build() -> None:
 
     raw_masks, explicit_metal = semantic_masks(rgb, layers, silhouette, px_per_mm)
     masks = clean_masks(raw_masks, silhouette, px_per_mm)
+    fill_names = tuple(masks.keys())
     colour_union = np.zeros_like(silhouette)
     for mask in masks.values():
         colour_union = cv2.bitwise_or(colour_union, mask)
@@ -224,10 +248,10 @@ def build() -> None:
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{canvas_w_mm:.3f}mm" height="{canvas_h_mm:.3f}mm" viewBox="0 0 {canvas_w_mm:.3f} {canvas_h_mm:.3f}">',
         f'  <title>HN Pendant manufacturing master {VERSION}</title>',
-        '  <desc>Rebuilt from five embedded raster semantic layers in result_02.svg. Four paint fills plus raised metal. Nominal 40 mm.</desc>',
+        f'  <desc>Rebuilt from five embedded raster semantic layers in result_02.svg. {len(fill_names)} paint fills plus raised metal. Nominal {NOMINAL_HEIGHT_MM:.2f} mm.</desc>',
         f'  <g id="CUT_OUTER_METAL" fill="{PALETTE["METAL"]}" fill-rule="evenodd"><path d="{html.escape(svg_path(base_paths))}"/></g>',
     ]
-    for name in ("SKIN", "WHITE", "HAIR", "BLUE"):
+    for name in fill_names:
         svg_lines.append(f'  <g id="FILL_{name}" fill="{PALETTE[name]}" fill-rule="evenodd"><path d="{html.escape(svg_path(paths[name]))}"/></g>')
     svg_lines.append(f'  <g id="RAISED_METAL_DETAILS" fill="{PALETTE["METAL"]}" fill-rule="evenodd"><path d="{html.escape(svg_path(metal_paths))}"/></g>')
     svg_lines.append("</svg>")
@@ -238,12 +262,10 @@ def build() -> None:
     doc.units = ezdxf.units.MM
     layer_colours = {
         "CUT_OUTER": PALETTE["METAL"],
-        "FILL_SKIN": PALETTE["SKIN"],
-        "FILL_WHITE": PALETTE["WHITE"],
-        "FILL_HAIR": PALETTE["HAIR"],
-        "FILL_BLUE": PALETTE["BLUE"],
         "RAISED_METAL": PALETTE["METAL"],
     }
+    for name in fill_names:
+        layer_colours[f"FILL_{name}"] = PALETTE[name]
     for aci, (name, colour) in enumerate(layer_colours.items(), start=1):
         layer = doc.layers.add(name, color=((aci - 1) % 7) + 1)
         layer.rgb = ezdxf.colors.RGB.from_hex(colour)
@@ -254,7 +276,7 @@ def build() -> None:
             msp.add_lwpolyline([(x, canvas_h_mm - y) for x, y in points], close=True, dxfattribs={"layer": layer})
 
     add_polylines(base_paths, "CUT_OUTER")
-    for name in ("SKIN", "WHITE", "HAIR", "BLUE"):
+    for name in fill_names:
         add_polylines(paths[name], f"FILL_{name}")
     add_polylines(metal_paths, "RAISED_METAL")
     dxf_file = OUT_DIR / f"HN-PENDANT-RESULT02-{VERSION}.dxf"
@@ -266,12 +288,10 @@ def build() -> None:
     split_dir.mkdir(parents=True, exist_ok=True)
     split_sources = {
         "CUT_OUTER": base_paths,
-        "FILL_SKIN": paths["SKIN"],
-        "FILL_WHITE": paths["WHITE"],
-        "FILL_HAIR": paths["HAIR"],
-        "FILL_BLUE": paths["BLUE"],
         "RAISED_METAL": metal_paths,
     }
+    for name in fill_names:
+        split_sources[f"FILL_{name}"] = paths[name]
     for layer_name, items in split_sources.items():
         split_doc = ezdxf.new("R2010", setup=True)
         split_doc.units = ezdxf.units.MM
@@ -289,24 +309,31 @@ def build() -> None:
         writer = csv.writer(stream)
         writer.writerow(["layer", "purpose", "reference_color", "closed_contours"])
         writer.writerow(["CUT_OUTER", "316L outer silhouette/base", PALETTE["METAL"], len(base_paths)])
-        writer.writerow(["FILL_SKIN", "skin enamel/fill", PALETTE["SKIN"], len(paths["SKIN"])])
-        writer.writerow(["FILL_WHITE", "white enamel/fill", PALETTE["WHITE"], len(paths["WHITE"])])
-        writer.writerow(["FILL_HAIR", "hair enamel/fill", PALETTE["HAIR"], len(paths["HAIR"])])
-        writer.writerow(["FILL_BLUE", "blue enamel/fill, including heart", PALETTE["BLUE"], len(paths["BLUE"])])
+        purposes = {
+            "SKIN": "skin enamel/fill",
+            "WHITE": "white enamel/fill",
+            "HAIR": "hair enamel/fill",
+            "BLUE": "blue enamel/fill",
+            "HEART": "monster heart enamel/fill",
+        }
+        for name in fill_names:
+            writer.writerow([f"FILL_{name}", purposes[name], PALETTE[name], len(paths[name])])
         writer.writerow(["RAISED_METAL", "raised metal separators/features", PALETTE["METAL"], len(metal_paths)])
 
     scale = 14
+    process_rgb = np.full((silhouette.shape[0], silhouette.shape[1], 3), 255, dtype=np.uint8)
+    metal_rgb = tuple(int(PALETTE["METAL"][i:i + 2], 16) for i in (1, 3, 5))
+    process_rgb[silhouette > 0] = metal_rgb
+    for name in fill_names:
+        colour = tuple(int(PALETTE[name][i:i + 2], 16) for i in (1, 3, 5))
+        process_rgb[masks[name] > 0] = colour
+    process_crop = Image.fromarray(process_rgb).crop((x0, y0, x1, y1))
+    process_crop = process_crop.resize(
+        (round(width_mm * scale), round(NOMINAL_HEIGHT_MM * scale)),
+        Image.Resampling.NEAREST,
+    )
     preview = Image.new("RGB", (round(canvas_w_mm * scale), round(canvas_h_mm * scale)), "white")
-    draw = ImageDraw.Draw(preview)
-
-    def draw_paths(items: list[list[tuple[float, float]]], fill: str) -> None:
-        for points in items:
-            if len(points) >= 3:
-                draw.polygon([(round(x * scale), round(y * scale)) for x, y in points], fill=fill)
-
-    draw_paths(base_paths, PALETTE["METAL"])
-    for name in ("SKIN", "WHITE", "HAIR", "BLUE"):
-        draw_paths(paths[name], PALETTE[name])
+    preview.paste(process_crop, (round(MARGIN_MM * scale), round(MARGIN_MM * scale)))
     preview_file = OUT_DIR / f"HN-PENDANT-RESULT02-PREVIEW-{VERSION}.png"
     preview.save(preview_file)
 
@@ -358,7 +385,7 @@ def build() -> None:
         "",
         f"- `HN-PENDANT-RESULT02-{VERSION}.svg`：毫米尺寸、分层闭合路径的加工母版。",
         f"- `HN-PENDANT-RESULT02-{VERSION}.dxf`：R2010、毫米单位、分层闭合 LWPOLYLINE。",
-        f"- `HN-PENDANT-RESULT02-PREVIEW-{VERSION}.png`：由加工几何渲染的五色预览。",
+        f"- `HN-PENDANT-RESULT02-PREVIEW-{VERSION}.png`：由加工几何渲染的工艺分色预览。",
         f"- `HN-PENDANT-RESULT02-COMPARISON-{VERSION}.png`：源合成图与加工结果对照。",
         f"- `HN-PENDANT-RESULT02-SOURCE-LAYERS-{VERSION}.png`：5 个源图层的可视化审计。",
         f"- `HN-PENDANT-RESULT02-LAYERS-{VERSION}.csv`：加工图层、参考色和闭合轮廓数量。",
@@ -374,7 +401,11 @@ def build() -> None:
             else f"- 目标最小保留特征：约 `{MIN_FEATURE_MM:.2f} mm`。"
         ),
         "- 肤色、蓝色、爱心和头发由各自源图层 Alpha 提取；白色从人物轮廓内的中性浅色恢复。",
-        "- 爱心并入蓝色层；灰色描边、人物眼眉和毛怪五官归入凸起金属层。",
+        (
+            f"- 爱心独立为 `FILL_HEART`，参考色 `{PALETTE['HEART']}`；灰色描边、人物眼眉和毛怪五官归入凸起金属层。"
+            if SEPARATE_HEART
+            else "- 爱心并入蓝色层；灰色描边、人物眼眉和毛怪五官归入凸起金属层。"
+        ),
         (
             "- 全细节模式不执行形态开闭、最小面积过滤或色块侵蚀；发丝、鞋带、衣褶和指缝按源图层保留。"
             if PRESERVE_ALL_DETAILS
@@ -394,7 +425,7 @@ def build() -> None:
         "",
         "- 工厂确认最小金属隔断、填色区、凹槽深度和允许圆角后，重新偏置最终路径。",
         "- 增加吊环、背面、厚度、重心、毛怪连接/转轴和公差图。",
-        "- 1:1 打印并确认 40 mm 下手指、眼睛、鞋子和毛怪五官可读。",
+        f"- 1:1 打印并确认 {NOMINAL_HEIGHT_MM:.0f} mm 下手指、眼睛、鞋子和毛怪五官可读。",
         "- 当前文件可用于 DFM 与询价，不可未经工厂回签直接开模。",
         "",
     ])
