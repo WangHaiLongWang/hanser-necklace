@@ -178,9 +178,9 @@ def build() -> None:
     draw_paths(base_paths, PALETTE["METAL"])
     for name in ("SKIN", "WHITE", "HAIR", "BLUE"):
         draw_paths(region_paths[name], PALETTE[name])
-    # Metal is already visible through the base, but the explicit layer makes
-    # the raster preview match the DXF layer semantics.
-    draw_paths(metal_paths, PALETTE["METAL"])
+    # Do not repaint the raised-metal network here: the metal base is already
+    # visible through every gap between inset colour regions. The explicit
+    # RAISED_METAL layer remains present in SVG/DXF for manufacturing review.
     preview_file = OUT_DIR / "HN-PENDANT-RESULT02-PREVIEW-v0.3.png"
     preview.save(preview_file)
 

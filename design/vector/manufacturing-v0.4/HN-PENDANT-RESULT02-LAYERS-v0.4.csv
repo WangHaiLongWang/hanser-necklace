@@ -1,0 +1,7 @@
+﻿layer,purpose,reference_color,closed_contours
+CUT_OUTER,316L outer silhouette/base,#A7A7A7,1
+FILL_SKIN,skin enamel/fill,#FAD3AB,8
+FILL_WHITE,white enamel/fill,#F5F3F0,23
+FILL_HAIR,hair enamel/fill,#905530,3
+FILL_BLUE,"blue enamel/fill, including heart",#196FC6,12
+RAISED_METAL,raised metal separators/features,#A7A7A7,47
