@@ -167,10 +167,16 @@ def apply_semantic_overrides(rgb: np.ndarray, labels: np.ndarray, silhouette: np
     return out
 
 
-def contour_paths(mask: np.ndarray, x0: int, y0: int, px_per_mm: float) -> list[list[tuple[float, float]]]:
+def contour_paths(
+    mask: np.ndarray,
+    x0: int,
+    y0: int,
+    px_per_mm: float,
+    tolerance_mm: float = CURVE_TOLERANCE_MM,
+) -> list[list[tuple[float, float]]]:
     contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
     paths: list[list[tuple[float, float]]] = []
-    epsilon_px = CURVE_TOLERANCE_MM * px_per_mm
+    epsilon_px = tolerance_mm * px_per_mm
     for contour in contours:
         if abs(cv2.contourArea(contour)) < 3:
             continue

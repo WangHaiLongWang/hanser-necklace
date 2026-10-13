@@ -12,6 +12,7 @@ base.VERSION = "v0.5-80mm"
 base.OUT_DIR = ROOT / "design" / "vector" / "manufacturing-v0.5-80mm"
 base.NOMINAL_HEIGHT_MM = 80.0
 base.MARGIN_MM = 3.0
+base.TARGET_WIDTH_MM = 56.72
 
 
 def build() -> None:

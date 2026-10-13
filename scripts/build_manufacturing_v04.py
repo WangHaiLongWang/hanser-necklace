@@ -36,6 +36,9 @@ MARGIN_MM = 2.0
 METAL_WEB_MM = 0.35
 MIN_FEATURE_MM = 0.50
 MIN_REGION_AREA_MM2 = 0.08
+TARGET_WIDTH_MM: float | None = None
+PRESERVE_ALL_DETAILS = False
+PATH_TOLERANCE_MM = 0.08
 
 PALETTE = {
     "METAL": "#A7A7A7",
@@ -87,10 +90,29 @@ def layer_colour_mask(layer: np.ndarray, predicate: np.ndarray) -> np.ndarray:
     return np.where((layer[:, :, 3] > 12) & predicate, 255, 0).astype(np.uint8)
 
 
-def semantic_masks(composite: np.ndarray, layers: list[np.ndarray], silhouette: np.ndarray, px_per_mm: float) -> dict[str, np.ndarray]:
+def semantic_masks(
+    composite: np.ndarray,
+    layers: list[np.ndarray],
+    silhouette: np.ndarray,
+    px_per_mm: float,
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
     # SVG embedded-image order mirrors the PSD group: base metal/white artwork,
     # skin, heart, blue clothing, hair.
-    _, skin_layer, heart_layer, clothing_layer, hair_layer = layers
+    base_layer, skin_layer, heart_layer, clothing_layer, hair_layer = layers
+
+    # Preserve every neutral-gray divider from the dedicated base/outline
+    # layer. These pixels take priority over all paint fills.
+    br, bg, bb = [base_layer[:, :, channel].astype(np.int16) for channel in range(3)]
+    base_chroma = np.maximum.reduce([br, bg, bb]) - np.minimum.reduce([br, bg, bb])
+    base_value = np.maximum.reduce([br, bg, bb])
+    explicit_metal = np.where(
+        (base_layer[:, :, 3] > 12)
+        & (base_chroma <= 18)
+        & (base_value < 238)
+        & (silhouette > 0),
+        255,
+        0,
+    ).astype(np.uint8)
 
     sr, sg, sb = [skin_layer[:, :, channel].astype(np.int16) for channel in range(3)]
     skin_predicate = (sr >= 190) & (sr > sg + 8) & (sg > sb + 6)
@@ -112,14 +134,14 @@ def semantic_masks(composite: np.ndarray, layers: list[np.ndarray], silhouette: 
     white_predicate = (rr >= 202) & (rg >= 202) & (rb >= 195) & (chroma <= 25)
     white = np.where(white_predicate & (silhouette > 0), 255, 0).astype(np.uint8)
 
-    # Slightly consolidate the already simplified upper hand without changing
-    # its outer silhouette. This removes narrow internal finger slits.
-    upper_hand = polygon_mask(silhouette.shape, [(510, 95), (750, 90), (800, 255), (615, 270), (495, 205)])
-    hand_skin = cv2.bitwise_and(skin, upper_hand)
-    close_px = max(3, int(round(0.42 * px_per_mm)) | 1)
-    hand_skin = cv2.morphologyEx(hand_skin, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_px, close_px)))
-    skin[upper_hand > 0] = 0
-    skin = cv2.bitwise_or(skin, hand_skin)
+    if not PRESERVE_ALL_DETAILS:
+        # Consolidate narrow internal finger slits only in simplified variants.
+        upper_hand = polygon_mask(silhouette.shape, [(510, 95), (750, 90), (800, 255), (615, 270), (495, 205)])
+        hand_skin = cv2.bitwise_and(skin, upper_hand)
+        close_px = max(3, int(round(0.42 * px_per_mm)) | 1)
+        hand_skin = cv2.morphologyEx(hand_skin, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_px, close_px)))
+        skin[upper_hand > 0] = 0
+        skin = cv2.bitwise_or(skin, hand_skin)
 
     active = silhouette > 0
     for mask in (skin, white, hair, blue):
@@ -129,10 +151,18 @@ def semantic_masks(composite: np.ndarray, layers: list[np.ndarray], silhouette: 
     hair[blue > 0] = 0
     skin[(blue > 0) | (hair > 0)] = 0
     white[(blue > 0) | (hair > 0) | (skin > 0)] = 0
-    return {"SKIN": skin, "WHITE": white, "HAIR": hair, "BLUE": blue}
+    for mask in (skin, white, hair, blue):
+        mask[explicit_metal > 0] = 0
+    return {"SKIN": skin, "WHITE": white, "HAIR": hair, "BLUE": blue}, explicit_metal
 
 
 def clean_masks(raw: dict[str, np.ndarray], silhouette: np.ndarray, px_per_mm: float) -> dict[str, np.ndarray]:
+    if PRESERVE_ALL_DETAILS:
+        # At 80 mm the source already contains explicit metal dividers. Keep
+        # every classified pixel and every connected detail; the unpainted gaps
+        # become the raised-metal network without widening or filtering it.
+        return {name: cv2.bitwise_and(mask, silhouette) for name, mask in raw.items()}
+
     half_web_px = max(1, int(round((METAL_WEB_MM / 2.0) * px_per_mm)))
     inset = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * half_web_px + 1, 2 * half_web_px + 1))
     cleanup_px = max(3, int(round(0.18 * px_per_mm)) | 1)
@@ -161,15 +191,34 @@ def build() -> None:
     canvas_w_mm = width_mm + 2 * MARGIN_MM
     canvas_h_mm = NOMINAL_HEIGHT_MM + 2 * MARGIN_MM
 
-    masks = clean_masks(semantic_masks(rgb, layers, silhouette, px_per_mm), silhouette, px_per_mm)
+    raw_masks, explicit_metal = semantic_masks(rgb, layers, silhouette, px_per_mm)
+    masks = clean_masks(raw_masks, silhouette, px_per_mm)
     colour_union = np.zeros_like(silhouette)
     for mask in masks.values():
         colour_union = cv2.bitwise_or(colour_union, mask)
-    raised_metal = cv2.bitwise_and(silhouette, cv2.bitwise_not(colour_union))
+    raised_metal = cv2.bitwise_or(
+        explicit_metal,
+        cv2.bitwise_and(silhouette, cv2.bitwise_not(colour_union)),
+    )
 
-    base_paths = contour_paths(silhouette, x0, y0, px_per_mm)
-    paths = {name: contour_paths(mask, x0, y0, px_per_mm) for name, mask in masks.items()}
-    metal_paths = contour_paths(raised_metal, x0, y0, px_per_mm)
+    base_paths = contour_paths(silhouette, x0, y0, px_per_mm, PATH_TOLERANCE_MM)
+    paths = {name: contour_paths(mask, x0, y0, px_per_mm, PATH_TOLERANCE_MM) for name, mask in masks.items()}
+    metal_paths = contour_paths(raised_metal, x0, y0, px_per_mm, PATH_TOLERANCE_MM)
+
+    if TARGET_WIDTH_MM is not None:
+        x_scale = TARGET_WIDTH_MM / width_mm
+
+        def scale_path_x(items: list[list[tuple[float, float]]]) -> list[list[tuple[float, float]]]:
+            return [
+                [(MARGIN_MM + (x - MARGIN_MM) * x_scale, y) for x, y in points]
+                for points in items
+            ]
+
+        base_paths = scale_path_x(base_paths)
+        paths = {name: scale_path_x(items) for name, items in paths.items()}
+        metal_paths = scale_path_x(metal_paths)
+        width_mm = TARGET_WIDTH_MM
+        canvas_w_mm = width_mm + 2 * MARGIN_MM
 
     svg_lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -319,10 +368,18 @@ def build() -> None:
         "",
         f"- 名义图案高度：`{NOMINAL_HEIGHT_MM:.2f} mm`，宽度：`{width_mm:.2f} mm`，不含吊环。",
         f"- 目标金属分隔宽度：约 `{METAL_WEB_MM:.2f} mm`。",
-        f"- 目标最小保留特征：约 `{MIN_FEATURE_MM:.2f} mm`。",
+        (
+            "- 本版关闭最小特征删除，保留源图层中的全部可识别细节；工厂需在 DFM 中标注不能加工的区域。"
+            if PRESERVE_ALL_DETAILS
+            else f"- 目标最小保留特征：约 `{MIN_FEATURE_MM:.2f} mm`。"
+        ),
         "- 肤色、蓝色、爱心和头发由各自源图层 Alpha 提取；白色从人物轮廓内的中性浅色恢复。",
         "- 爱心并入蓝色层；灰色描边、人物眼眉和毛怪五官归入凸起金属层。",
-        "- 细碎发丝、鞋带、衣褶和窄指缝通过闭合、开运算、最小面积过滤和向内偏置进行简化。",
+        (
+            "- 全细节模式不执行形态开闭、最小面积过滤或色块侵蚀；发丝、鞋带、衣褶和指缝按源图层保留。"
+            if PRESERVE_ALL_DETAILS
+            else "- 细碎发丝、鞋带、衣褶和窄指缝通过闭合、开运算、最小面积过滤和向内偏置进行简化。"
+        ),
         "",
         "## 图层统计",
         "",
