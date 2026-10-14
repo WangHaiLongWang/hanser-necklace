@@ -40,6 +40,7 @@ TARGET_WIDTH_MM: float | None = None
 PRESERVE_ALL_DETAILS = False
 PATH_TOLERANCE_MM = 0.08
 SEPARATE_HEART = False
+OUTER_BORDER_MM = 0.0
 
 PALETTE = {
     "METAL": "#A7A7A7",
@@ -216,6 +217,12 @@ def build() -> None:
 
     raw_masks, explicit_metal = semantic_masks(rgb, layers, silhouette, px_per_mm)
     masks = clean_masks(raw_masks, silhouette, px_per_mm)
+    if OUTER_BORDER_MM > 0:
+        inside_distance = cv2.distanceTransform(silhouette, cv2.DIST_L2, 5)
+        outer_border_px = OUTER_BORDER_MM * px_per_mm
+        outer_border_zone = (silhouette > 0) & (inside_distance <= outer_border_px)
+        for mask in masks.values():
+            mask[outer_border_zone] = 0
     fill_names = tuple(masks.keys())
     colour_union = np.zeros_like(silhouette)
     for mask in masks.values():
@@ -395,6 +402,11 @@ def build() -> None:
         "",
         f"- 名义图案高度：`{NOMINAL_HEIGHT_MM:.2f} mm`，宽度：`{width_mm:.2f} mm`，不含吊环。",
         f"- 目标金属分隔宽度：约 `{METAL_WEB_MM:.2f} mm`。",
+        (
+            f"- 外轮廓金属边名义宽度：`{OUTER_BORDER_MM:.2f} mm`。"
+            if OUTER_BORDER_MM > 0
+            else "- 外轮廓金属边沿用源图层宽度，尚未单独冻结。"
+        ),
         (
             "- 本版关闭最小特征删除，保留源图层中的全部可识别细节；工厂需在 DFM 中标注不能加工的区域。"
             if PRESERVE_ALL_DETAILS

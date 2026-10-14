@@ -38,6 +38,7 @@ def main() -> None:
     for source in sorted((DESIGN_SOURCE / "layers").glob("*.dxf")):
         shutil.copy2(source, target_layers / source.name)
     shutil.copy2(ROOT / "factory-pack" / "RFQ-DRAFT-CONCEPT-v0.1.md", HANDOFF / "RFQ-v0.7.md")
+    shutil.copy2(ROOT / "docs" / "08-pearl-chain-and-bail-spec.md", HANDOFF / "PEARL-CHAIN-AND-BAIL-SPEC.md")
 
     files = sorted(path for path in HANDOFF.rglob("*") if path.is_file() and path.name != "MANIFEST-SHA256.txt")
     manifest = HANDOFF / "MANIFEST-SHA256.txt"

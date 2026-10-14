@@ -16,11 +16,12 @@
 
 ## 当前工程基线
 
-- 当前 DFM 候选：`VECTOR-DRAFT-v0.7-80mm-detail`。
+- 当前 DFM 候选：`ENGINEERING-DRAFT-v0.8-80mm`。
 - 名义图案尺寸：80.00 × 56.72 mm，不含吊环。
 - 工艺分层：肤色、白色、棕色、蓝色、爱心色 `#EA6278`、凸起金属。
-- 目标最小金属隔断：约 0.20 mm，最终以工厂书面能力和工程样为准。
-- 可直接发给工程方的压缩包：`factory-pack/HN-PENDANT-engineering-handoff-v0.7.zip`。
+- 内部金属线名义 0.30 mm；外轮廓名义 0.60 mm、允许 0.50–0.70 mm。
+- 总厚 1.90 mm；正面凹刻/填色槽深 0.30 mm；剩余基底 1.60 mm。
+- 可直接发给工程方的压缩包：`factory-pack/HN-PENDANT-engineering-handoff-v0.8.zip`。
 - 当前文件只能用于 DFM 和询价；缺少吊环、背面、厚度、凹槽深度与公差，不可直接开模。
 
 ## 首版建议基线

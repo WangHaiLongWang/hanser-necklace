@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="120mm" height="55mm" viewBox="0 0 120 55">
+  <style>text{font-family:Arial,sans-serif;font-size:3px} .metal{fill:#A7A7A7;stroke:#333;stroke-width:.15} .fill{fill:#F5F3F0;stroke:#555;stroke-width:.12} .dim{stroke:#C33;stroke-width:.15;fill:none}</style>
+  <text x="5" y="5">HN-PENDANT v0.8 SECTION - mm</text>
+  <g transform="translate(10,18) scale(4,-4)">
+    <path class="metal" d="M0,0 H24.0 V1.9 H23.4 V1.5999999999999999 H11.3 V1.9 H11.0 V1.5999999999999999 H0.6 V1.9 H0 Z"/>
+    <path class="fill" d="M0.6,1.5999999999999999 H11.0 V1.9 H0.6 Z"/>
+    <path class="fill" d="M11.3,1.5999999999999999 H23.4 V1.9 H11.3 Z"/>
+  </g>
+  <text x="10" y="34">Total thickness: 1.90</text>
+  <text x="10" y="39">Front engraving / fill recess: 0.30</text>
+  <text x="10" y="44">Remaining base: 1.60</text>
+  <text x="60" y="34">Internal raised metal: 0.30</text>
+  <text x="60" y="39">Outer border nominal: 0.60</text>
+  <text x="60" y="44">Outer border allowed: 0.50-0.70</text>
+</svg>
